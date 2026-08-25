@@ -42,6 +42,7 @@ import (
 	"github.com/gophish/gophish/middleware"
 	"github.com/gophish/gophish/models"
 	"github.com/gophish/gophish/webhook"
+	"github.com/gophish/gophish/worker"
 )
 
 const (
@@ -112,6 +113,15 @@ func main() {
 	adminOptions := []controllers.AdminServerOption{}
 	if *disableMailer {
 		adminOptions = append(adminOptions, controllers.WithWorker(nil))
+	} else {
+		mailWorker, err := worker.New(
+			worker.WithBatchSize(conf.MailerConf.BatchSize),
+			worker.WithMaxConcurrent(conf.MailerConf.MaxConcurrent),
+		)
+		if err != nil {
+			log.Fatal(err)
+		}
+		adminOptions = append(adminOptions, controllers.WithWorker(mailWorker))
 	}
 	adminConfig := conf.AdminConf
 	adminServer := controllers.NewAdminServer(adminConfig, adminOptions...)

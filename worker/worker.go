@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	log "github.com/gophish/gophish/logger"
@@ -9,6 +10,10 @@ import (
 	"github.com/gophish/gophish/models"
 	"github.com/sirupsen/logrus"
 )
+
+// DefaultMailBatchSize is the default number of messages sent over one SMTP
+// connection before another batch takes its place.
+const DefaultMailBatchSize = 100
 
 // Worker is an interface that defines the operations needed for a background worker
 type Worker interface {
@@ -19,19 +24,24 @@ type Worker interface {
 
 // DefaultWorker is the background worker that handles watching for new campaigns and sending emails appropriately.
 type DefaultWorker struct {
-	mailer mailer.Mailer
+	mailer        mailer.Mailer
+	batchSize     int
+	maxConcurrent int
 }
 
 // New creates a new worker object to handle the creation of campaigns
 func New(options ...func(Worker) error) (Worker, error) {
-	defaultMailer := mailer.NewMailWorker()
 	w := &DefaultWorker{
-		mailer: defaultMailer,
+		batchSize:     DefaultMailBatchSize,
+		maxConcurrent: mailer.DefaultMaxConcurrent,
 	}
 	for _, opt := range options {
 		if err := opt(w); err != nil {
 			return nil, err
 		}
+	}
+	if w.mailer == nil {
+		w.mailer = mailer.NewMailWorkerWithConcurrency(w.maxConcurrent)
 	}
 	return w, nil
 }
@@ -42,6 +52,66 @@ func WithMailer(m mailer.Mailer) func(*DefaultWorker) error {
 	return func(w *DefaultWorker) error {
 		w.mailer = m
 		return nil
+	}
+}
+
+// WithBatchSize configures how many messages share one SMTP connection. A
+// value of zero keeps the default.
+func WithBatchSize(size int) func(Worker) error {
+	return func(worker Worker) error {
+		if size < 0 {
+			return fmt.Errorf("mail batch size must not be negative: %d", size)
+		}
+		w, ok := worker.(*DefaultWorker)
+		if !ok {
+			return fmt.Errorf("unsupported worker type %T", worker)
+		}
+		if size > 0 {
+			w.batchSize = size
+		}
+		return nil
+	}
+}
+
+// WithMaxConcurrent configures the global number of mail batches that may be
+// processed simultaneously. A value of zero keeps the default.
+func WithMaxConcurrent(maxConcurrent int) func(Worker) error {
+	return func(worker Worker) error {
+		if maxConcurrent < 0 {
+			return fmt.Errorf("maximum mail concurrency must not be negative: %d", maxConcurrent)
+		}
+		w, ok := worker.(*DefaultWorker)
+		if !ok {
+			return fmt.Errorf("unsupported worker type %T", worker)
+		}
+		if maxConcurrent > 0 {
+			w.maxConcurrent = maxConcurrent
+		}
+		return nil
+	}
+}
+
+func splitMailBatches(ms []mailer.Mail, size int) [][]mailer.Mail {
+	if len(ms) == 0 {
+		return nil
+	}
+	if size <= 0 {
+		size = DefaultMailBatchSize
+	}
+	batches := make([][]mailer.Mail, 0, (len(ms)+size-1)/size)
+	for start := 0; start < len(ms); start += size {
+		end := start + size
+		if end > len(ms) {
+			end = len(ms)
+		}
+		batches = append(batches, ms[start:end])
+	}
+	return batches
+}
+
+func (w *DefaultWorker) queueMailBatches(ms []mailer.Mail) {
+	for _, batch := range splitMailBatches(ms, w.batchSize) {
+		w.mailer.Queue(batch)
 	}
 }
 
@@ -92,8 +162,9 @@ func (w *DefaultWorker) processCampaigns(t time.Time) error {
 			}
 			log.WithFields(logrus.Fields{
 				"num_emails": len(msc),
+				"batch_size": w.batchSize,
 			}).Info("Sending emails to mailer for processing")
-			w.mailer.Queue(msc)
+			w.queueMailBatches(msc)
 		}(cid, msc)
 	}
 	return nil
@@ -144,7 +215,7 @@ func (w *DefaultWorker) LaunchCampaign(c models.Campaign) {
 		}
 		mailEntries = append(mailEntries, m)
 	}
-	w.mailer.Queue(mailEntries)
+	w.queueMailBatches(mailEntries)
 }
 
 // SendTestEmail sends a test email

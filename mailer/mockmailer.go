@@ -106,6 +106,8 @@ type mockMessage struct {
 	message      []byte
 	sendAt       time.Time
 	backoffCount int
+	successCount int
+	errorCount   int
 	getdialer    func() (Dialer, error)
 	err          error
 	finished     bool
@@ -145,6 +147,7 @@ func (mm *mockMessage) Backoff(reason error) error {
 func (mm *mockMessage) Error(err error) error {
 	mm.err = err
 	mm.finished = true
+	mm.errorCount++
 	return nil
 }
 
@@ -168,5 +171,6 @@ func (mm *mockMessage) GetSmtpFrom() (string, error) {
 
 func (mm *mockMessage) Success() error {
 	mm.finished = true
+	mm.successCount++
 	return nil
 }

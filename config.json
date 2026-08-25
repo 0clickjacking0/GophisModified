@@ -13,6 +13,10 @@
 		"key_path": "example.key",
 		"enable_qrcode": true
 	},
+	"mailer": {
+		"batch_size": 100,
+		"max_concurrent": 5
+	},
 	"db_name": "sqlite3",
 	"db_path": "gophish.db",
 	"migrations_prefix": "db/db_",

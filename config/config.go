@@ -27,17 +27,24 @@ type PhishServer struct {
 	EnableQRCode bool   `json:"enable_qrcode"`
 }
 
+// MailerConfig controls batching and global concurrency for campaign email.
+type MailerConfig struct {
+	BatchSize     int `json:"batch_size"`
+	MaxConcurrent int `json:"max_concurrent"`
+}
+
 // Config represents the configuration information.
 type Config struct {
-	AdminConf      AdminServer `json:"admin_server"`
-	PhishConf      PhishServer `json:"phish_server"`
-	DBName         string      `json:"db_name"`
-	DBPath         string      `json:"db_path"`
-	DBSSLCaPath    string      `json:"db_sslca_path"`
-	MigrationsPath string      `json:"migrations_prefix"`
-	TestFlag       bool        `json:"test_flag"`
-	ContactAddress string      `json:"contact_address"`
-	Logging        *log.Config `json:"logging"`
+	AdminConf      AdminServer  `json:"admin_server"`
+	PhishConf      PhishServer  `json:"phish_server"`
+	MailerConf     MailerConfig `json:"mailer"`
+	DBName         string       `json:"db_name"`
+	DBPath         string       `json:"db_path"`
+	DBSSLCaPath    string       `json:"db_sslca_path"`
+	MigrationsPath string       `json:"migrations_prefix"`
+	TestFlag       bool         `json:"test_flag"`
+	ContactAddress string       `json:"contact_address"`
+	Logging        *log.Config  `json:"logging"`
 }
 
 // Version contains the current gophish version

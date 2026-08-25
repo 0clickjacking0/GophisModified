@@ -14,6 +14,10 @@ import (
 // MaxReconnectAttempts is the maximum number of times we should reconnect to a server
 var MaxReconnectAttempts = 10
 
+// DefaultMaxConcurrent is the default number of mail batches that may be sent
+// at the same time.
+const DefaultMaxConcurrent = 5
+
 // ErrMaxConnectAttempts is thrown when the maximum number of reconnect attempts
 // is reached.
 type ErrMaxConnectAttempts struct {
@@ -62,14 +66,25 @@ type Mail interface {
 // on a channel to send. It's assumed that every slice of emails received is meant
 // to be sent to the same server.
 type MailWorker struct {
-	queue chan []Mail
+	queue     chan []Mail
+	semaphore chan struct{}
 }
 
 // NewMailWorker returns an instance of MailWorker with the mail queue
 // initialized.
 func NewMailWorker() *MailWorker {
+	return NewMailWorkerWithConcurrency(DefaultMaxConcurrent)
+}
+
+// NewMailWorkerWithConcurrency returns a MailWorker with the provided global
+// concurrency limit. Non-positive values use DefaultMaxConcurrent.
+func NewMailWorkerWithConcurrency(maxConcurrent int) *MailWorker {
+	if maxConcurrent <= 0 {
+		maxConcurrent = DefaultMaxConcurrent
+	}
 	return &MailWorker{
-		queue: make(chan []Mail),
+		queue:     make(chan []Mail),
+		semaphore: make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -78,12 +93,26 @@ func NewMailWorker() *MailWorker {
 func (mw *MailWorker) Start(ctx context.Context) {
 	for {
 		select {
+		case mw.semaphore <- struct{}{}:
 		case <-ctx.Done():
 			return
+		}
+		select {
+		case <-ctx.Done():
+			<-mw.semaphore
+			return
 		case ms := <-mw.queue:
+			if len(ms) == 0 {
+				<-mw.semaphore
+				continue
+			}
 			go func(ctx context.Context, ms []Mail) {
+				defer func() { <-mw.semaphore }()
 				dialer, err := ms[0].GetDialer()
 				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
 					errorMail(err, ms)
 					return
 				}
@@ -116,7 +145,7 @@ func dialHost(ctx context.Context, dialer Dialer) (Sender, error) {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, nil
+			return nil, ctx.Err()
 		default:
 			break
 		}
@@ -141,11 +170,18 @@ func dialHost(ctx context.Context, dialer Dialer) (Sender, error) {
 func sendMail(ctx context.Context, dialer Dialer, ms []Mail) {
 	sender, err := dialHost(ctx, dialer)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Warn(err)
 		errorMail(err, ms)
 		return
 	}
-	defer sender.Close()
+	defer func() {
+		if sender != nil {
+			sender.Close()
+		}
+	}()
 	message := gomail.NewMessage()
 	for i, m := range ms {
 		select {
@@ -213,8 +249,13 @@ func sendMail(ctx context.Context, dialer Dialer, ms []Mail) {
 					"email": message.GetHeader("To")[0],
 				}).Warn(err)
 				origErr := err
+				sender.Close()
+				sender = nil
 				sender, err = dialHost(ctx, dialer)
 				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
 					errorMail(err, ms[i:])
 					break
 				}
