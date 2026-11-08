@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/textproto"
+	"strings"
 	"testing"
 	"time"
 
@@ -402,6 +403,55 @@ func (s *ModelsSuite) TestEmbedAttachment(ch *check.C) {
 	// the text file was added as an attachment.
 	ch.Assert(got.Attachments, check.HasLen, 1)
 	ch.Assert(got.Attachments[0].Filename, check.Equals, "test.txt")
+}
+
+func (s *ModelsSuite) TestMailLogEmbedsReferencedQRCode(ch *check.C) {
+	campaign := s.createCampaignDependencies(ch)
+	campaign.Template.HTML = "<html><body>{{.QR}}</body></html>"
+	ch.Assert(PutTemplate(&campaign.Template), check.Equals, nil)
+	campaign.QRSize = "256"
+	ch.Assert(PostCampaign(&campaign, campaign.UserId), check.Equals, nil)
+
+	result := campaign.Results[0]
+	mailLog := &MailLog{}
+	err := db.Where("r_id=? AND campaign_id=?", result.RId, campaign.Id).Find(mailLog).Error
+	ch.Assert(err, check.Equals, nil)
+
+	msg := gomail.NewMessage()
+	ch.Assert(mailLog.Generate(msg), check.Equals, nil)
+	msgBuff := &bytes.Buffer{}
+	_, err = msg.WriteTo(msgBuff)
+	ch.Assert(err, check.Equals, nil)
+
+	raw := msgBuff.String()
+	contentID := fmt.Sprintf("qr-%s@gophish.local", result.RId)
+	ch.Assert(strings.Contains(raw, "multipart/related"), check.Equals, true)
+	ch.Assert(strings.Contains(raw, "cid:"+contentID), check.Equals, true)
+	ch.Assert(strings.Contains(raw, "Content-ID: <"+contentID+">"), check.Equals, true)
+	ch.Assert(strings.Contains(raw, "Content-Disposition: inline\r\n"), check.Equals, true)
+	ch.Assert(strings.Contains(raw, "Content-Type: image/png\r\n"), check.Equals, true)
+	ch.Assert(strings.Contains(raw, "Content-Disposition: attachment"), check.Equals, false)
+}
+
+func (s *ModelsSuite) TestMailLogOmitsUnreferencedQRCode(ch *check.C) {
+	campaign := s.createCampaignDependencies(ch)
+	campaign.QRSize = "256"
+	ch.Assert(PostCampaign(&campaign, campaign.UserId), check.Equals, nil)
+
+	result := campaign.Results[0]
+	mailLog := &MailLog{}
+	err := db.Where("r_id=? AND campaign_id=?", result.RId, campaign.Id).Find(mailLog).Error
+	ch.Assert(err, check.Equals, nil)
+
+	msg := gomail.NewMessage()
+	ch.Assert(mailLog.Generate(msg), check.Equals, nil)
+	msgBuff := &bytes.Buffer{}
+	_, err = msg.WriteTo(msgBuff)
+	ch.Assert(err, check.Equals, nil)
+
+	raw := msgBuff.String()
+	ch.Assert(strings.Contains(raw, "multipart/related"), check.Equals, false)
+	ch.Assert(strings.Contains(raw, "Content-Type: image/png"), check.Equals, false)
 }
 
 func BenchmarkMailLogGenerate100(b *testing.B) {

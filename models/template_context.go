@@ -2,6 +2,7 @@ package models
 
 import (
 	"bytes"
+	"fmt"
 	"net/mail"
 	"net/url"
 	"path"
@@ -27,6 +28,7 @@ type PhishingTemplateContext struct {
 	BaseURL     string
 	QRBase64    string
 	QRName      string
+	QRCID       string
 	QR          string
 	BaseRecipient
 }
@@ -68,6 +70,7 @@ func NewPhishingTemplateContext(ctx TemplateContext, r BaseRecipient, rid string
 	// Prepare QR code
 	qrBase64 := ""
 	qrName := ""
+	qrCID := ""
 	qr := ""
 	qrSize := ctx.getQRSize()
 	if qrSize != "" {
@@ -75,7 +78,8 @@ func NewPhishingTemplateContext(ctx TemplateContext, r BaseRecipient, rid string
 		if err != nil {
 			return PhishingTemplateContext{}, err
 		}
-		qr = "<img src=\"cid:" + qrName + "\">"
+		qrCID = fmt.Sprintf("qr-%s@gophish.local", rid)
+		qr = "<img src=\"cid:" + qrCID + "\" alt=\"\">"
 	}
 
 	return PhishingTemplateContext{
@@ -88,6 +92,7 @@ func NewPhishingTemplateContext(ctx TemplateContext, r BaseRecipient, rid string
 		RId:           rid,
 		QRBase64:      qrBase64,
 		QRName:        qrName,
+		QRCID:         qrCID,
 		QR:            qr,
 	}, nil
 }

@@ -236,6 +236,7 @@ func (m *MailLog) Generate(msg *gomail.Message) error {
 	}
 
 	msg.SetHeader("To", r.FormatAddress())
+	embedQR := false
 	if c.Template.Text != "" {
 		text, err := ExecuteTemplate(c.Template.Text, ptx)
 		if err != nil {
@@ -248,6 +249,7 @@ func (m *MailLog) Generate(msg *gomail.Message) error {
 		if err != nil {
 			log.Warn(err)
 		}
+		embedQR = ptx.QRCID != "" && strings.Contains(html, "cid:"+ptx.QRCID)
 
 		// Generate plain text version from HTML for Multipart/Alternative support
 		plainText, err := html2text.FromString(html, html2text.Options{PrettyTables: true})
@@ -270,14 +272,14 @@ func (m *MailLog) Generate(msg *gomail.Message) error {
 	}
 
 	// Attach QR code file if size was specified
-	if c.QRSize != "" && ptx.QRBase64 != "" {
+	if embedQR && ptx.QRBase64 != "" {
 		qrAttachment := Attachment{
 			Name:        ptx.QRName,
 			Content:     ptx.QRBase64,
 			Type:        "image/png",
 			vanillaFile: true,
 		}
-		addAttachment(msg, qrAttachment, ptx)
+		addEmbeddedAttachment(msg, qrAttachment, ptx, ptx.QRCID)
 	}
 
 	return nil
@@ -380,4 +382,22 @@ func addAttachment(msg *gomail.Message, a Attachment, ptx PhishingTemplateContex
 	} else {
 		msg.Attach(a.Name, copyFunc)
 	}
+}
+
+// addEmbeddedAttachment adds an inline MIME part with an explicit Content-ID.
+func addEmbeddedAttachment(msg *gomail.Message, a Attachment, ptx PhishingTemplateContext, contentID string) {
+	copyFunc := gomail.SetCopyFunc(func(w io.Writer) error {
+		reader, err := a.ApplyTemplate(ptx)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(w, reader)
+		return err
+	})
+	headers := map[string][]string{
+		"Content-ID":          {"<" + contentID + ">"},
+		"Content-Disposition": {"inline"},
+		"Content-Type":        {a.Type},
+	}
+	msg.Embed(a.Name, copyFunc, gomail.SetHeader(headers))
 }

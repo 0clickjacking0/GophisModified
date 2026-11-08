@@ -45,6 +45,7 @@ func (s *ModelsSuite) TestNewTemplateContext(c *check.C) {
 		RId:           r.RId,
 		QRBase64:      "",
 		QRName:        "",
+		QRCID:         "",
 		QR:            "",
 	}
 	expected.Tracker = "<img alt='' style='display: none' src='" + expected.TrackingURL + "'/>"
