@@ -49,6 +49,20 @@ function query(endpoint, method, data, async) {
     })
 }
 
+function uploadQuery(endpoint, data) {
+    return $.ajax({
+        url: "/api" + endpoint,
+        method: "POST",
+        data: data,
+        processData: false,
+        contentType: false,
+        dataType: "json",
+        beforeSend: function (xhr) {
+            xhr.setRequestHeader('Authorization', 'Bearer ' + user.api_key);
+        }
+    })
+}
+
 function escapeHtml(text) {
     return $("<div/>").text(text).html()
 }
@@ -174,6 +188,9 @@ var api = {
         // post() - Posts a page to POST /pages
         post: function (page) {
             return query("/pages/", "POST", page, false)
+        },
+        uploadFolder: function (formData) {
+            return uploadQuery("/pages/upload-folder", formData)
         }
     },
     // pageId contains the endpoints for /pages/:id
