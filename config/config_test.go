@@ -23,6 +23,10 @@ var validConfig = []byte(`{
 		"cert_path": "example.crt",
 		"key_path": "example.key"
 	},
+	"mailer": {
+		"batch_size": 25,
+		"max_concurrent": 3
+	},
 	"db_name": "sqlite3",
 	"db_path": "gophish.db",
 	"migrations_prefix": "db/db_",

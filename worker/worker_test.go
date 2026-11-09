@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -133,22 +134,33 @@ func TestMailLogGrouping(t *testing.T) {
 		}
 	}
 
-	lm := &logMailer{queue: make(chan []mailer.Mail)}
-	worker := &DefaultWorker{}
-	worker.mailer = lm
+	const batchSize = 3
+	lm := &logMailer{queue: make(chan []mailer.Mail, 40)}
+	worker := &DefaultWorker{mailer: lm, batchSize: batchSize}
 
 	// Trigger the worker, generating the maillogs and sending them to the
 	// mailer
 	worker.processCampaigns(time.Now())
 
-	// Verify that each slice of maillogs received belong to the same campaign
-	for i := 0; i < 10; i++ {
-		ms := <-lm.queue
+	// Verify that each batch contains one campaign, respects the configured
+	// size, and that no campaign loses a recipient.
+	mailByCampaign := make(map[int64]int)
+	for i := 0; i < 40; i++ {
+		var ms []mailer.Mail
+		select {
+		case ms = <-lm.queue:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for campaign mail batches")
+		}
+		if len(ms) == 0 || len(ms) > batchSize {
+			t.Fatalf("unexpected batch size: got %d, want 1-%d", len(ms), batchSize)
+		}
 		maillog, ok := ms[0].(*models.MailLog)
 		if !ok {
 			t.Fatalf("unable to cast mail to models.MailLog")
 		}
 		expected := maillog.CampaignId
+		mailByCampaign[expected] += len(ms)
 		for _, m := range ms {
 			maillog, ok = m.(*models.MailLog)
 			if !ok {
@@ -158,6 +170,111 @@ func TestMailLogGrouping(t *testing.T) {
 			if got != expected {
 				t.Fatalf("unexpected campaign ID received for maillog: got %d expected %d", got, expected)
 			}
+		}
+	}
+	if len(mailByCampaign) != 10 {
+		t.Fatalf("unexpected campaign count: got %d expected 10", len(mailByCampaign))
+	}
+	for campaignID, count := range mailByCampaign {
+		if count != 10 {
+			t.Fatalf("unexpected mail count for campaign %d: got %d expected 10", campaignID, count)
+		}
+	}
+}
+
+func TestSplitMailBatches(t *testing.T) {
+	tests := []struct {
+		name       string
+		mailCount  int
+		batchSize  int
+		batchSizes []int
+	}{
+		{name: "empty", mailCount: 0, batchSize: 3, batchSizes: nil},
+		{name: "less than batch", mailCount: 2, batchSize: 3, batchSizes: []int{2}},
+		{name: "exact batch", mailCount: 3, batchSize: 3, batchSizes: []int{3}},
+		{name: "partial final batch", mailCount: 7, batchSize: 3, batchSizes: []int{3, 3, 1}},
+		{name: "default batch", mailCount: 101, batchSize: 0, batchSizes: []int{100, 1}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mails := make([]mailer.Mail, test.mailCount)
+			for i := range mails {
+				mails[i] = &models.EmailRequest{}
+			}
+			batches := splitMailBatches(mails, test.batchSize)
+			var gotSizes []int
+			flattened := make([]mailer.Mail, 0, len(mails))
+			for _, batch := range batches {
+				if len(batch) == 0 {
+					t.Fatal("splitMailBatches returned an empty batch")
+				}
+				gotSizes = append(gotSizes, len(batch))
+				flattened = append(flattened, batch...)
+			}
+			if !reflect.DeepEqual(gotSizes, test.batchSizes) {
+				t.Fatalf("unexpected batch sizes: got %v expected %v", gotSizes, test.batchSizes)
+			}
+			if !reflect.DeepEqual(flattened, mails) {
+				t.Fatal("splitMailBatches changed mail order or contents")
+			}
+		})
+	}
+}
+
+func TestLaunchCampaignBatchesMail(t *testing.T) {
+	setupTest(t)
+	campaign, err := setupCampaign(1)
+	if err != nil {
+		t.Fatalf("error creating campaign: %v", err)
+	}
+
+	lm := &logMailer{queue: make(chan []mailer.Mail, 4)}
+	worker := &DefaultWorker{mailer: lm, batchSize: 3}
+	worker.LaunchCampaign(*campaign)
+
+	gotSizes := []int{}
+	gotMail := 0
+	for len(lm.queue) > 0 {
+		batch := <-lm.queue
+		gotSizes = append(gotSizes, len(batch))
+		gotMail += len(batch)
+		for _, message := range batch {
+			maillog := message.(*models.MailLog)
+			if maillog.CampaignId != campaign.Id {
+				t.Fatalf("unexpected campaign ID: got %d expected %d", maillog.CampaignId, campaign.Id)
+			}
+		}
+	}
+	if !reflect.DeepEqual(gotSizes, []int{3, 3, 3, 1}) {
+		t.Fatalf("unexpected batch sizes: got %v expected [3 3 3 1]", gotSizes)
+	}
+	if gotMail != 10 {
+		t.Fatalf("unexpected queued mail count: got %d expected 10", gotMail)
+	}
+}
+
+func TestWorkerOptions(t *testing.T) {
+	configured, err := New(WithBatchSize(25), WithMaxConcurrent(3))
+	if err != nil {
+		t.Fatalf("unexpected configuration error: %v", err)
+	}
+	w := configured.(*DefaultWorker)
+	if w.batchSize != 25 || w.maxConcurrent != 3 {
+		t.Fatalf("worker options were not applied: %#v", w)
+	}
+	defaults, err := New(WithBatchSize(0), WithMaxConcurrent(0))
+	if err != nil {
+		t.Fatalf("unexpected default configuration error: %v", err)
+	}
+	defaultWorker := defaults.(*DefaultWorker)
+	if defaultWorker.batchSize != DefaultMailBatchSize || defaultWorker.maxConcurrent != mailer.DefaultMaxConcurrent {
+		t.Fatalf("unexpected worker defaults: %#v", defaultWorker)
+	}
+
+	for _, option := range []func(Worker) error{WithBatchSize(-1), WithMaxConcurrent(-1)} {
+		if _, err := New(option); err == nil {
+			t.Fatal("expected negative mailer configuration to fail")
 		}
 	}
 }
