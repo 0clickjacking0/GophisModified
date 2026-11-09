@@ -50,14 +50,14 @@ var statuses = {
         point: "ct-point-reported"
     },
     "Error": {
-        color: "#6c7a89",
-        label: "label-default",
+        color: "#d9534f",
+        label: "label-danger",
         icon: "fa-times",
         point: "ct-point-error"
     },
     "Error Sending Email": {
-        color: "#6c7a89",
-        label: "label-default",
+        color: "#d9534f",
+        label: "label-danger",
         icon: "fa-times",
         point: "ct-point-error"
     },
@@ -80,8 +80,8 @@ var statuses = {
         point: "ct-point-sending"
     },
     "Retrying": {
-        color: "#6c7a89",
-        label: "label-default",
+        color: "#f0ad4e",
+        label: "label-warning",
         icon: "fa-clock-o",
         point: "ct-point-error"
     },
@@ -409,7 +409,8 @@ function renderTimeline(data) {
         "position": data[5],
         "status": data[6],
         "reported": data[7],
-        "send_date": data[8]
+        "send_date": data[8],
+        "send_error": data[9]
     }
     results = '<div class="timeline col-sm-12 well well-lg">' +
         '<h6>Timeline for ' + escapeHtml(record.first_name) + ' ' + escapeHtml(record.last_name) +
@@ -458,7 +459,7 @@ function renderTimeline(data) {
                 if (details.error) {
                     results += '<div class="timeline-event-details"><i class="fa fa-caret-right"></i> View Details</div>'
                     results += '<div class="timeline-event-results">'
-                    results += '<span class="label label-default">Error</span> ' + details.error
+                    results += '<span class="label label-danger">Error</span> ' + escapeHtml(details.error)
                     results += '</div>'
                 }
             }
@@ -644,18 +645,37 @@ var updateMap = function (results) {
 
 /**
  * Creates a status label for use in the results datatable
- * @param {string} status 
- * @param {moment(datetime)} send_date 
+ * @param {string} status
+ * @param {moment(datetime)} send_date
+ * @param {string} send_error
  */
-function createStatusLabel(status, send_date) {
+function createStatusLabel(status, send_date, send_error) {
     var label = statuses[status].label || "label-default";
-    var statusColumn = "<span class=\"label " + label + "\">" + status + "</span>"
+    var displayStatus = status == "Error" ? "Delivery Failed" : status
+    var statusLabel = $("<span>").addClass("label " + label).text(displayStatus)
     // Add the tooltip if the email is scheduled to be sent
     if (status == "Scheduled" || status == "Retrying") {
         var sendDateMessage = "Scheduled to send at " + send_date
-        statusColumn = "<span class=\"label " + label + "\" data-toggle=\"tooltip\" data-placement=\"top\" data-html=\"true\" title=\"" + sendDateMessage + "\">" + status + "</span>"
+        if (send_error) {
+            sendDateMessage += "; last error: " + send_error
+        }
+        statusLabel.attr({
+            "data-toggle": "tooltip",
+            "data-placement": "top",
+            "title": sendDateMessage
+        })
+    } else if (status == "Error" && send_error) {
+        statusLabel.attr({
+            "data-toggle": "tooltip",
+            "data-placement": "top",
+            "title": send_error
+        })
     }
-    return statusColumn
+    return $("<div>").append(statusLabel).html()
+}
+
+function renderSendErrorColumn(data) {
+    return escapeHtml(data || "")
 }
 
 /* poll - Queries the API and updates the UI with the results
@@ -736,6 +756,7 @@ function poll() {
                         rowData[8] = moment(result.send_date).format('MMMM Do YYYY, h:mm:ss a')
                         rowData[7] = result.reported
                         rowData[6] = result.status
+                        rowData[9] = result.send_error || ""
                         resultsTable.row(i).data(rowData)
                         if (row.child.isShown()) {
                             $(row.node()).find("#caret").removeClass("fa-caret-right")
@@ -801,10 +822,14 @@ function load() {
                         }, {
                             "visible": false,
                             "targets": [0, 8]
+                        }, {
+                            "visible": false,
+                            "render": renderSendErrorColumn,
+                            "targets": [9]
                         },
                         {
                             "render": function (data, type, row) {
-                                return createStatusLabel(data, row[8])
+                                return createStatusLabel(data, row[8], row[9])
                             },
                             "targets": [6]
                         },
@@ -839,7 +864,8 @@ function load() {
                         escapeHtml(result.position) || "",
                         result.status,
                         result.reported,
-                        moment(result.send_date).format('MMMM Do YYYY, h:mm:ss a')
+                        moment(result.send_date).format('MMMM Do YYYY, h:mm:ss a'),
+                        result.send_error || ""
                     ])
                     email_series_data[result.status]++;
                     if (result.reported) {

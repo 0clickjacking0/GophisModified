@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 	"time"
@@ -429,12 +430,34 @@ func GetCampaignResults(id int64, uid int64) (CampaignResults, error) {
 		log.Errorf("%s: results not found for campaign", err)
 		return cr, err
 	}
-	err = db.Table("events").Where("campaign_id=?", cr.Id).Find(&cr.Events).Error
+	err = db.Table("events").Where("campaign_id=?", cr.Id).Order("id ASC").Find(&cr.Events).Error
 	if err != nil {
 		log.Errorf("%s: events not found for campaign", err)
 		return cr, err
 	}
+	populateResultSendErrors(cr.Results, cr.Events)
 	return cr, err
+}
+
+// populateResultSendErrors exposes the most recent SMTP error for recipients
+// that are still retrying or whose delivery permanently failed.
+func populateResultSendErrors(results []Result, events []Event) {
+	latestErrors := make(map[string]string)
+	for _, event := range events {
+		if event.Message != EventSendingError || event.Details == "" {
+			continue
+		}
+		details := EventError{}
+		if err := json.Unmarshal([]byte(event.Details), &details); err != nil || details.Error == "" {
+			continue
+		}
+		latestErrors[event.Email] = details.Error
+	}
+	for i := range results {
+		if results[i].Status == Error || results[i].Status == StatusRetry {
+			results[i].SendError = latestErrors[results[i].Email]
+		}
+	}
 }
 
 // GetQueuedCampaigns returns the campaigns that are queued up for this given minute

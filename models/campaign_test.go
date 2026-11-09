@@ -1,7 +1,9 @@
 package models
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/textproto"
 	"testing"
 	"time"
 
@@ -150,6 +152,69 @@ func (s *ModelsSuite) TestCampaignGetResults(c *check.C) {
 	got, err := GetCampaign(campaign.Id, campaign.UserId)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(len(campaign.Results), check.Equals, len(got.Results))
+}
+
+func (s *ModelsSuite) TestCampaignResultsIncludeRecipientSendError(c *check.C) {
+	campaign := s.createCampaign(c)
+	failedResult := campaign.Results[0]
+	expectedError := &textproto.Error{Code: 550, Msg: "mailbox unavailable"}
+	c.Assert(failedResult.HandleEmailError(expectedError), check.Equals, nil)
+
+	results, err := GetCampaignResults(campaign.Id, campaign.UserId)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(len(results.Results), check.Equals, len(campaign.Results))
+	encodedResults, err := json.Marshal(results.Results)
+	c.Assert(err, check.Equals, nil)
+	apiResults := []map[string]interface{}{}
+	c.Assert(json.Unmarshal(encodedResults, &apiResults), check.Equals, nil)
+	for _, result := range apiResults {
+		_, hasSendError := result["send_error"]
+		c.Assert(hasSendError, check.Equals, true)
+	}
+
+	found := false
+	for _, result := range results.Results {
+		if result.RId == failedResult.RId {
+			found = true
+			c.Assert(result.Status, check.Equals, Error)
+			c.Assert(result.SendError, check.Equals, expectedError.Error())
+			continue
+		}
+		c.Assert(result.SendError, check.Equals, "")
+	}
+	c.Assert(found, check.Equals, true)
+}
+
+func (s *ModelsSuite) TestCampaignResultsHideRecoveredSendError(c *check.C) {
+	campaign := s.createCampaign(c)
+	result := campaign.Results[0]
+	temporaryError := &textproto.Error{Code: 451, Msg: "temporary local problem"}
+	c.Assert(result.HandleEmailBackoff(temporaryError, time.Now().UTC().Add(time.Minute)), check.Equals, nil)
+
+	results, err := GetCampaignResults(campaign.Id, campaign.UserId)
+	c.Assert(err, check.Equals, nil)
+	found := false
+	for _, current := range results.Results {
+		if current.RId == result.RId {
+			found = true
+			c.Assert(current.Status, check.Equals, StatusRetry)
+			c.Assert(current.SendError, check.Equals, temporaryError.Error())
+		}
+	}
+	c.Assert(found, check.Equals, true)
+
+	c.Assert(result.HandleEmailSent(), check.Equals, nil)
+	results, err = GetCampaignResults(campaign.Id, campaign.UserId)
+	c.Assert(err, check.Equals, nil)
+	found = false
+	for _, current := range results.Results {
+		if current.RId == result.RId {
+			found = true
+			c.Assert(current.Status, check.Equals, EventSent)
+			c.Assert(current.SendError, check.Equals, "")
+		}
+	}
+	c.Assert(found, check.Equals, true)
 }
 
 func setupCampaignDependencies(b *testing.B, size int) {

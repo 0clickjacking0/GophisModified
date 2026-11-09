@@ -104,6 +104,22 @@ func (s *ModelsSuite) TestMailLogBackoff(ch *check.C) {
 	// Check that we receive our error after meeting the maximum send attempts
 	err = m.Backoff(expectedError)
 	ch.Assert(err, check.Equals, ErrMaxSendAttempts)
+	result, err = GetResult(m.RId)
+	ch.Assert(err, check.Equals, nil)
+	ch.Assert(result.Status, check.Equals, Error)
+
+	campaign, err = GetCampaign(campaign.Id, int64(1))
+	ch.Assert(err, check.Equals, nil)
+	lastEvent := campaign.Events[len(campaign.Events)-1]
+	details := EventError{}
+	ch.Assert(json.Unmarshal([]byte(lastEvent.Details), &details), check.Equals, nil)
+	ch.Assert(strings.Contains(details.Error, ErrMaxSendAttempts.Error()), check.Equals, true)
+	ch.Assert(strings.Contains(details.Error, expectedError.Error()), check.Equals, true)
+
+	remainingCount := 0
+	err = db.Model(&MailLog{}).Where("r_id=?", m.RId).Count(&remainingCount).Error
+	ch.Assert(err, check.Equals, nil)
+	ch.Assert(remainingCount, check.Equals, 0)
 }
 
 func (s *ModelsSuite) TestMailLogError(ch *check.C) {

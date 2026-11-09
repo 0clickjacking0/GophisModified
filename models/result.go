@@ -29,6 +29,7 @@ type Result struct {
 	UserId       int64     `json:"-"`
 	RId          string    `json:"id"`
 	Status       string    `json:"status" sql:"not null"`
+	SendError    string    `json:"send_error" gorm:"-"`
 	IP           string    `json:"ip"`
 	Latitude     float64   `json:"latitude"`
 	Longitude    float64   `json:"longitude"`
@@ -47,7 +48,9 @@ func (r *Result) createEvent(status string, details interface{}) (*Event, error)
 		}
 		e.Details = string(dj)
 	}
-	AddEvent(e, r.CampaignId)
+	if err := AddEvent(e, r.CampaignId); err != nil {
+		return nil, err
+	}
 	return e, nil
 }
 

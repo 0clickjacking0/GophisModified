@@ -65,8 +65,14 @@ func (m *MailLog) Backoff(reason error) error {
 	if err != nil {
 		return err
 	}
-	if m.SendAttempt == MaxSendAttempts {
-		r.HandleEmailError(ErrMaxSendAttempts)
+	if m.SendAttempt >= MaxSendAttempts {
+		finalErr := fmt.Errorf("%s; last SMTP error: %v", ErrMaxSendAttempts, reason)
+		if err := r.HandleEmailError(finalErr); err != nil {
+			return err
+		}
+		if err := db.Delete(m).Error; err != nil {
+			return err
+		}
 		return ErrMaxSendAttempts
 	}
 	// Add an error, since we had to backoff because of a
