@@ -45,6 +45,18 @@ type TransparencyResponse struct {
 // to return a transparency response.
 const TransparencySuffix = "+"
 
+// This exact user agent is used by the recipient gateway's link scanner.
+const gatewayScannerUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
+const gatewayScannerWindow = 2 * time.Second
+
+func isGatewayScannerRequest(r *http.Request, result models.Result, receivedAt time.Time) bool {
+	if r.Method != http.MethodGet || r.UserAgent() != gatewayScannerUserAgent || result.Status != models.EventSent {
+		return false
+	}
+	elapsed := receivedAt.Sub(result.SendDate)
+	return elapsed >= 0 && elapsed <= gatewayScannerWindow
+}
+
 // PhishingServerOption is a functional option that is used to configure the
 // the phishing server
 type PhishingServerOption func(*PhishingServer)
@@ -157,10 +169,16 @@ func (ps *PhishingServer) TrackHandler(w http.ResponseWriter, r *http.Request) {
 	rs := ctx.Get(r, "result").(models.Result)
 	rid := ctx.Get(r, "rid").(string)
 	d := ctx.Get(r, "details").(models.EventDetails)
+	gatewayScanner, _ := ctx.Get(r, "gateway_scanner").(bool)
 
 	// Check for a transparency request
 	if strings.HasSuffix(rid, TransparencySuffix) {
 		ps.TransparencyHandler(w, r)
+		return
+	}
+	if gatewayScanner {
+		logGatewayScannerSuppression(r, rid, d)
+		http.ServeFile(w, r, "static/images/pixel.png")
 		return
 	}
 
@@ -191,10 +209,16 @@ func (ps *PhishingServer) ReportHandler(w http.ResponseWriter, r *http.Request) 
 	rs := ctx.Get(r, "result").(models.Result)
 	rid := ctx.Get(r, "rid").(string)
 	d := ctx.Get(r, "details").(models.EventDetails)
+	gatewayScanner, _ := ctx.Get(r, "gateway_scanner").(bool)
 
 	// Check for a transparency request
 	if strings.HasSuffix(rid, TransparencySuffix) {
 		ps.TransparencyHandler(w, r)
+		return
+	}
+	if gatewayScanner {
+		logGatewayScannerSuppression(r, rid, d)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -241,6 +265,7 @@ func (ps *PhishingServer) PhishHandler(w http.ResponseWriter, r *http.Request) {
 	rid := ctx.Get(r, "rid").(string)
 	c := ctx.Get(r, "campaign").(models.Campaign)
 	d := ctx.Get(r, "details").(models.EventDetails)
+	gatewayScanner, _ := ctx.Get(r, "gateway_scanner").(bool)
 
 	// Check for a transparency request
 	if strings.HasSuffix(rid, TransparencySuffix) {
@@ -256,9 +281,13 @@ func (ps *PhishingServer) PhishHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.Method == "GET":
-		err = rs.HandleClickedLink(d)
-		if err != nil {
-			log.Error(err)
+		if gatewayScanner {
+			logGatewayScannerSuppression(r, rid, d)
+		} else {
+			err = rs.HandleClickedLink(d)
+			if err != nil {
+				log.Error(err)
+			}
 		}
 	case r.Method == "POST":
 		err = rs.HandleFormSubmit(d)
@@ -349,9 +378,16 @@ func fakeNotFound(w http.ResponseWriter, r *http.Request) {
 </html>`)
 }
 
+func logGatewayScannerSuppression(r *http.Request, rid string, details models.EventDetails) {
+	elapsed, _ := ctx.Get(r, "gateway_scanner_elapsed").(time.Duration)
+	log.Infof("Suppressing gateway scanner activity: reason=known_ua_immediate_fetch rid=%s address=%s elapsed=%s path=%s",
+		rid, details.Browser["address"], elapsed, r.URL.Path)
+}
+
 // setupContext handles some of the administrative work around receiving a new
 // request, such as checking the result ID, the campaign, etc.
 func setupContext(r *http.Request) (*http.Request, error) {
+	receivedAt := time.Now().UTC()
 	err := r.ParseForm()
 	if err != nil {
 		log.Error(err)
@@ -401,10 +437,16 @@ func setupContext(r *http.Request) (*http.Request, error) {
 	if err != nil {
 		ip = r.RemoteAddr
 	}
-	// Handle post processing such as GeoIP
-	err = rs.UpdateGeo(ip)
-	if err != nil {
-		log.Error(err)
+	gatewayScannerElapsed := receivedAt.Sub(rs.SendDate)
+	gatewayScanner := isGatewayScannerRequest(r, rs, receivedAt)
+	// Do not let a known gateway scanner overwrite the recipient's IP and
+	// location. The request is still allowed through so the landing page can be
+	// inspected without being counted as recipient activity.
+	if !gatewayScanner {
+		err = rs.UpdateGeo(ip)
+		if err != nil {
+			log.Error(err)
+		}
 	}
 	d := models.EventDetails{
 		Payload: r.Form,
@@ -417,5 +459,7 @@ func setupContext(r *http.Request) (*http.Request, error) {
 	r = ctx.Set(r, "result", rs)
 	r = ctx.Set(r, "campaign", c)
 	r = ctx.Set(r, "details", d)
+	r = ctx.Set(r, "gateway_scanner", gatewayScanner)
+	r = ctx.Set(r, "gateway_scanner_elapsed", gatewayScannerElapsed)
 	return r, nil
 }

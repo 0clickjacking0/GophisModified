@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/gophish/gophish/config"
 	"github.com/gophish/gophish/models"
@@ -99,10 +100,11 @@ func reportEmail404(t *testing.T, ctx *testContext, rid string) {
 }
 
 func clickLink(t *testing.T, ctx *testContext, rid string, expectedHTML string) {
-	resp, err := http.Get(fmt.Sprintf("%s/?%s=%s", ctx.phishServer.URL, models.RecipientParameter, rid))
-	if err != nil {
-		t.Fatalf("error requesting / endpoint: %v", err)
-	}
+	clickLinkWithUserAgent(t, ctx, rid, expectedHTML, "")
+}
+
+func clickLinkWithUserAgent(t *testing.T, ctx *testContext, rid string, expectedHTML string, userAgent string) {
+	resp := getWithUserAgent(t, fmt.Sprintf("%s/?%s=%s", ctx.phishServer.URL, models.RecipientParameter, rid), userAgent)
 	defer resp.Body.Close()
 	got, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -111,6 +113,22 @@ func clickLink(t *testing.T, ctx *testContext, rid string, expectedHTML string) 
 	if !bytes.Equal(got, []byte(expectedHTML)) {
 		t.Fatalf("invalid response received from / endpoint. expected %s got %s", got, expectedHTML)
 	}
+}
+
+func getWithUserAgent(t *testing.T, requestURL string, userAgent string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	if err != nil {
+		t.Fatalf("error creating GET request: %v", err)
+	}
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("error sending GET request: %v", err)
+	}
+	return resp
 }
 
 func clickLink404(t *testing.T, ctx *testContext, rid string) {
@@ -226,6 +244,117 @@ func TestClickedPhishingLinkAfterOpen(t *testing.T) {
 	}
 	if result.ModifiedDate != lastEvent.Time {
 		t.Fatalf("unexpected result modified date received. expected %s got %s", lastEvent.Time, result.ModifiedDate)
+	}
+}
+
+func TestGatewayScannerLinkIsNotCounted(t *testing.T) {
+	ctx := setupTest(t)
+	defer tearDown(t, ctx)
+	campaign := getFirstCampaign(t)
+	result := campaign.Results[0]
+	if err := result.HandleEmailSent(); err != nil {
+		t.Fatalf("error marking email as sent: %v", err)
+	}
+	campaign = getFirstCampaign(t)
+	result = campaign.Results[0]
+	initialEventCount := len(campaign.Events)
+	initialModifiedDate := result.ModifiedDate
+
+	trackerURL := fmt.Sprintf("%s/resource/image/pixel.png?%s=%s", ctx.phishServer.URL, models.RecipientParameter, result.RId)
+	trackerResponse := getWithUserAgent(t, trackerURL, gatewayScannerUserAgent)
+	trackerResponse.Body.Close()
+
+	clickLinkWithUserAgent(t, ctx, result.RId, campaign.Page.HTML, gatewayScannerUserAgent)
+
+	campaign = getFirstCampaign(t)
+	result = campaign.Results[0]
+	if result.Status != models.EventSent {
+		t.Fatalf("gateway scanner changed result status. expected %s got %s", models.EventSent, result.Status)
+	}
+	if result.IP != "" {
+		t.Fatalf("gateway scanner changed result IP. expected empty IP got %s", result.IP)
+	}
+	if result.Latitude != 0 || result.Longitude != 0 {
+		t.Fatalf("gateway scanner changed result location. got latitude %f longitude %f", result.Latitude, result.Longitude)
+	}
+	if !result.ModifiedDate.Equal(initialModifiedDate) {
+		t.Fatalf("gateway scanner changed modified date. expected %s got %s", initialModifiedDate, result.ModifiedDate)
+	}
+	if len(campaign.Events) != initialEventCount {
+		t.Fatalf("gateway scanner created an event. expected %d events got %d", initialEventCount, len(campaign.Events))
+	}
+
+	humanUserAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"
+	clickLinkWithUserAgent(t, ctx, result.RId, campaign.Page.HTML, humanUserAgent)
+	campaign = getFirstCampaign(t)
+	result = campaign.Results[0]
+	if result.Status != models.EventClicked {
+		t.Fatalf("human click after gateway scan was not counted. expected %s got %s", models.EventClicked, result.Status)
+	}
+	if len(campaign.Events) != initialEventCount+1 {
+		t.Fatalf("unexpected event count after human click. expected %d got %d", initialEventCount+1, len(campaign.Events))
+	}
+}
+
+func TestSimilarBrowserUserAgentIsCounted(t *testing.T) {
+	ctx := setupTest(t)
+	defer tearDown(t, ctx)
+	campaign := getFirstCampaign(t)
+	result := campaign.Results[0]
+	if err := result.HandleEmailSent(); err != nil {
+		t.Fatalf("error marking email as sent: %v", err)
+	}
+	campaign = getFirstCampaign(t)
+	result = campaign.Results[0]
+	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.1 Safari/537.36"
+
+	clickLinkWithUserAgent(t, ctx, result.RId, campaign.Page.HTML, userAgent)
+
+	campaign = getFirstCampaign(t)
+	result = campaign.Results[0]
+	lastEvent := campaign.Events[len(campaign.Events)-1]
+	if result.Status != models.EventClicked {
+		t.Fatalf("similar browser user agent was not counted. expected %s got %s", models.EventClicked, result.Status)
+	}
+	if lastEvent.Message != models.EventClicked {
+		t.Fatalf("unexpected event status. expected %s got %s", models.EventClicked, lastEvent.Message)
+	}
+}
+
+func TestGatewayScannerRequestDetection(t *testing.T) {
+	sentAt := time.Date(2026, time.August, 14, 1, 15, 33, 0, time.UTC)
+	result := models.Result{Status: models.EventSent, SendDate: sentAt}
+	request, err := http.NewRequest(http.MethodGet, "http://example.test/?id=test", nil)
+	if err != nil {
+		t.Fatalf("error creating gateway request: %v", err)
+	}
+	request.Header.Set("User-Agent", gatewayScannerUserAgent)
+
+	tests := []struct {
+		name       string
+		method     string
+		userAgent  string
+		result     models.Result
+		receivedAt time.Time
+		expected   bool
+	}{
+		{name: "inside window", method: http.MethodGet, userAgent: gatewayScannerUserAgent, result: result, receivedAt: sentAt.Add(350 * time.Millisecond), expected: true},
+		{name: "window boundary", method: http.MethodGet, userAgent: gatewayScannerUserAgent, result: result, receivedAt: sentAt.Add(gatewayScannerWindow), expected: true},
+		{name: "after window", method: http.MethodGet, userAgent: gatewayScannerUserAgent, result: result, receivedAt: sentAt.Add(gatewayScannerWindow + time.Nanosecond), expected: false},
+		{name: "before sent", method: http.MethodGet, userAgent: gatewayScannerUserAgent, result: result, receivedAt: sentAt.Add(-time.Nanosecond), expected: false},
+		{name: "not sent", method: http.MethodGet, userAgent: gatewayScannerUserAgent, result: models.Result{Status: models.StatusSending, SendDate: sentAt}, receivedAt: sentAt, expected: false},
+		{name: "zero send date", method: http.MethodGet, userAgent: gatewayScannerUserAgent, result: models.Result{Status: models.EventSent}, receivedAt: sentAt, expected: false},
+		{name: "post request", method: http.MethodPost, userAgent: gatewayScannerUserAgent, result: result, receivedAt: sentAt, expected: false},
+		{name: "different user agent", method: http.MethodGet, userAgent: "Mozilla/5.0 Chrome/151.0.0.0", result: result, receivedAt: sentAt, expected: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request.Method = test.method
+			request.Header.Set("User-Agent", test.userAgent)
+			if got := isGatewayScannerRequest(request, test.result, test.receivedAt); got != test.expected {
+				t.Fatalf("unexpected gateway scanner detection. expected %t got %t", test.expected, got)
+			}
+		})
 	}
 }
 
