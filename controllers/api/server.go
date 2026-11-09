@@ -74,6 +74,7 @@ func (as *Server) registerRoutes() {
 	router.HandleFunc("/templates/", as.Templates)
 	router.HandleFunc("/templates/{id:[0-9]+}", as.Template)
 	router.HandleFunc("/pages/", as.Pages)
+	router.HandleFunc("/pages/upload-folder", as.UploadPageFolder)
 	router.HandleFunc("/pages/{id:[0-9]+}", as.Page)
 	router.HandleFunc("/smtp/", as.SendingProfiles)
 	router.HandleFunc("/smtp/{id:[0-9]+}", as.SendingProfile)

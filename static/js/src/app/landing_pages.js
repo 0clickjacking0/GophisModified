@@ -49,6 +49,67 @@ function dismiss() {
     $("#modal").modal('hide')
 }
 
+function uploadFolderError(message) {
+    $("#uploadFolderFlashes").empty().append("<div style=\"text-align:center\" class=\"alert alert-danger\">\
+        <i class=\"fa fa-exclamation-circle\"></i> " + escapeHtml(message) + "</div>")
+}
+
+function resetUploadFolderModal() {
+    $("#uploadFolderFlashes").empty()
+    $("#uploadFolderName").val("")
+    $("#uploadFolderInput").val("")
+    $("#uploadFolderSubmit").prop("disabled", false).html("<i class=\"fa fa-upload\"></i> 上传")
+}
+
+function uploadFolder() {
+    var name = $.trim($("#uploadFolderName").val())
+    var files = $("#uploadFolderInput").prop("files")
+    if (!name) {
+        uploadFolderError("请输入页面名称")
+        return
+    }
+    if (!files || files.length === 0) {
+        uploadFolderError("请选择要上传的文件夹")
+        return
+    }
+    var formData = new FormData()
+    formData.append("name", name)
+    var hasHTML = false
+    for (var i = 0; i < files.length; i++) {
+        var relativePath = files[i].webkitRelativePath || files[i].name
+        // Strip the selected directory itself, preserving nested folders.
+        var normalizedPath = relativePath.split("/").slice(1).join("/")
+        if (!normalizedPath) {
+            normalizedPath = files[i].name
+        }
+        formData.append("paths", normalizedPath)
+        formData.append("files", files[i])
+        if (/\.(html|htm)$/i.test(files[i].name)) {
+            hasHTML = true
+        }
+    }
+    if (!hasHTML) {
+        uploadFolderError("文件夹中至少需要一个 HTML 文件")
+        return
+    }
+    $("#uploadFolderSubmit").prop("disabled", true).html("<i class=\"fa fa-spinner fa-spin\"></i> 上传中...")
+    api.pages.uploadFolder(formData)
+        .success(function (data) {
+            resetUploadFolderModal()
+            $("#uploadFolderModal").modal("hide")
+            successFlash("页面及资源上传成功！")
+            load()
+        })
+        .error(function (data) {
+            var message = "上传失败"
+            if (data && data.responseJSON && data.responseJSON.message) {
+                message = data.responseJSON.message
+            }
+            uploadFolderError(message)
+            $("#uploadFolderSubmit").prop("disabled", false).html("<i class=\"fa fa-upload\"></i> 上传")
+        })
+}
+
 var deletePage = function (idx) {
     Swal.fire({
         title: "Are you sure?",
@@ -238,6 +299,12 @@ $(document).ready(function () {
         $("#capture_passwords").toggle()
         $("#redirect_url").toggle()
     })
+    $("#uploadFolderSubmit").click(uploadFolder)
+    $("#uploadFolderInput").change(function () {
+        var count = $(this).prop("files").length
+        $("#uploadFolderFileCount").text(count ? "已选择 " + count + " 个文件" : "")
+    })
+    $("#uploadFolderModal").on("hidden.bs.modal", resetUploadFolderModal)
     CKEDITOR.on('dialogDefinition', function (ev) {
         // Take the dialog name and its definition from the event data.
         var dialogName = ev.data.name;
