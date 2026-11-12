@@ -54,6 +54,7 @@ const i18n = {
             // Campaigns
             campaigns_title: 'Campaigns',
             campaigns_new: 'New Campaign',
+            campaigns_batch_delete: 'Batch Delete',
             campaigns_active: 'Active Campaigns',
             campaigns_archived: 'Archived Campaigns',
             campaigns_name: 'Name',
@@ -310,6 +311,7 @@ const i18n = {
             // 钓鱼活动
             campaigns_title: '钓鱼活动',
             campaigns_new: '新建活动',
+            campaigns_batch_delete: '批量删除',
             campaigns_active: '进行中的活动',
             campaigns_archived: '已归档活动',
             campaigns_name: '名称',

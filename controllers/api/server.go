@@ -62,6 +62,7 @@ func (as *Server) registerRoutes() {
 	router.HandleFunc("/imap/validate", as.IMAPServerValidate)
 	router.HandleFunc("/reset", as.Reset)
 	router.HandleFunc("/campaigns/", as.Campaigns)
+	router.HandleFunc("/campaigns/batch-delete", as.CampaignsBatchDelete)
 	router.HandleFunc("/campaigns/summary", as.CampaignsSummary)
 	router.HandleFunc("/campaigns/{id:[0-9]+}", as.Campaign)
 	router.HandleFunc("/campaigns/{id:[0-9]+}/results", as.CampaignResults)

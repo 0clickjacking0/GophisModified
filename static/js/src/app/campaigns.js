@@ -11,6 +11,73 @@ var labels = {
 var campaigns = []
 var campaign = {}
 
+function getCampaignTable(scope) {
+    if (scope === "archived") {
+        return $("#campaignTableArchive")
+    }
+    return $("#campaignTable")
+}
+
+function updateCampaignSelection() {
+    var selectedCount = $(".campaign-select:checked").length
+    var buttonText = i18n.t("campaigns_batch_delete")
+    if (selectedCount > 0) {
+        buttonText += " (" + selectedCount + ")"
+    }
+    $("#batchDeleteButton").prop("disabled", selectedCount === 0)
+    $("#batchDeleteButton").find("span").text(buttonText)
+}
+
+function toggleAllCampaigns(scope, checked) {
+    getCampaignTable(scope).find(".campaign-select").prop("checked", checked)
+    getCampaignTable(scope).find("input[id^='selectAll']").prop("checked", checked)
+    updateCampaignSelection()
+}
+
+function deleteSelectedCampaigns() {
+    var selectedIds = $(".campaign-select:checked").map(function () {
+        return parseInt(this.value, 10)
+    }).get()
+    if (selectedIds.length === 0) {
+        return
+    }
+
+    Swal.fire({
+        title: "Are you sure?",
+        text: "This will delete " + selectedIds.length + " selected campaigns. This can't be undone!",
+        type: "warning",
+        animation: false,
+        showCancelButton: true,
+        confirmButtonText: "Delete " + selectedIds.length + " Campaigns",
+        confirmButtonColor: "#428bca",
+        reverseButtons: true,
+        allowOutsideClick: false,
+        showLoaderOnConfirm: true,
+        preConfirm: function () {
+            return new Promise(function (resolve, reject) {
+                api.campaigns.batchDelete(selectedIds)
+                    .success(function () {
+                        resolve()
+                    })
+                    .error(function (data) {
+                        reject(data.responseJSON.message)
+                    })
+            })
+        }
+    }).then(function (result) {
+        if (result.value) {
+            Swal.fire(
+                'Campaigns Deleted!',
+                'The selected campaigns have been deleted!',
+                'success'
+            );
+        }
+        $('button:contains("OK")').on('click', function () {
+            location.reload()
+        })
+    })
+}
+
 // Launch attempts to POST to /campaigns/
 function launch() {
     Swal.fire({
@@ -357,7 +424,7 @@ $(document).ready(function () {
                         targets: "no-sort"
                     }],
                     order: [
-                        [1, "desc"]
+                        [2, "desc"]
                     ]
                 });
                 archivedCampaignsTable = $("#campaignTableArchive").DataTable({
@@ -366,7 +433,7 @@ $(document).ready(function () {
                         targets: "no-sort"
                     }],
                     order: [
-                        [1, "desc"]
+                        [2, "desc"]
                     ]
                 });
                 rows = {
@@ -387,6 +454,7 @@ $(document).ready(function () {
                     }
 
                     var row = [
+                        "<input type='checkbox' class='campaign-select' value='" + campaign.id + "' onclick='updateCampaignSelection()'>",
                         escapeHtml(campaign.name),
                         moment(campaign.created_date).format('MMMM Do YYYY, h:mm:ss a'),
                         "<span class=\"label " + label + "\" data-toggle=\"tooltip\" data-placement=\"right\" data-html=\"true\" title=\"" + quickStats + "\">" + campaign.status + "</span>",
@@ -409,6 +477,13 @@ $(document).ready(function () {
                 activeCampaignsTable.rows.add(rows['active']).draw()
                 archivedCampaignsTable.rows.add(rows['archived']).draw()
                 $('[data-toggle="tooltip"]').tooltip()
+                $("#campaignTable, #campaignTableArchive").on("change", ".campaign-select", function () {
+                    var table = $(this).closest("table")
+                    var allSelected = table.find(".campaign-select").length > 0 &&
+                        table.find(".campaign-select:checked").length === table.find(".campaign-select").length
+                    table.find("input[id^='selectAll']").prop("checked", allSelected)
+                    updateCampaignSelection()
+                })
             } else {
                 $("#emptyMessage").show()
             }

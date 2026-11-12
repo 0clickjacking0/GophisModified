@@ -8,6 +8,8 @@
         <button type="button" class="btn btn-primary" data-toggle="modal" data-backdrop="static" data-target="#modal"
             onclick="edit('new')">
             <i class="fa fa-plus"></i> <span data-i18n="campaigns_new">新建活动</span></button>
+        <button type="button" id="batchDeleteButton" class="btn btn-danger" onclick="deleteSelectedCampaigns()" disabled>
+            <i class="fa fa-trash-o"></i> <span data-i18n="campaigns_batch_delete">批量删除</span></button>
     </div>
     &nbsp;
 
@@ -34,6 +36,9 @@
                 <table id="campaignTable" class="table" style="display:none;">
                     <thead>
                         <tr>
+                            <th class="no-sort">
+                                <input type="checkbox" id="selectAllActiveCampaigns" onclick="toggleAllCampaigns('active', this.checked)">
+                            </th>
                             <th class="col-md-3" data-i18n="campaigns_name">名称</th>
                             <th class="col-md-4" data-i18n="campaigns_created_date">创建时间</th>
                             <th class="col-md-2" data-i18n="campaigns_status">状态</th>
@@ -57,6 +62,9 @@
                 <table id="campaignTableArchive" class="table" style="display:none;">
                     <thead>
                         <tr>
+                            <th class="no-sort">
+                                <input type="checkbox" id="selectAllArchivedCampaigns" onclick="toggleAllCampaigns('archived', this.checked)">
+                            </th>
                             <th class="col-md-3" data-i18n="campaigns_name">名称</th>
                             <th class="col-md-4" data-i18n="campaigns_created_date">创建时间</th>
                             <th class="col-md-2" data-i18n="campaigns_status">状态</th>

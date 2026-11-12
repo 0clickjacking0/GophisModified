@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jinzhu/gorm"
 	check "gopkg.in/check.v1"
 )
 
@@ -131,6 +132,25 @@ func (s *ModelsSuite) TestDeleteCampaignAlsoDeletesMailLogs(c *check.C) {
 	ms, err = GetMailLogsByCampaign(campaign.Id)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(len(ms), check.Equals, 0)
+}
+
+func (s *ModelsSuite) TestDeleteCampaignsOnlyDeletesOwnedCampaigns(c *check.C) {
+	first := s.createCampaign(c)
+	second := s.createCampaignDependencies(c)
+	second.Name = "Second Campaign"
+	c.Assert(PostCampaign(&second, second.UserId), check.Equals, nil)
+
+	// Campaign IDs do not have to be owned by the requesting user. This ID is
+	// arbitrary and should be ignored by the scoped deletion.
+	unownedId := second.Id + 1000
+
+	err := DeleteCampaigns(first.UserId, []int64{first.Id, second.Id, unownedId})
+	c.Assert(err, check.Equals, nil)
+
+	for _, id := range []int64{first.Id, second.Id} {
+		_, err = GetCampaign(id, first.UserId)
+		c.Assert(err, check.Equals, gorm.ErrRecordNotFound)
+	}
 }
 
 func (s *ModelsSuite) TestCompleteCampaignAlsoDeletesMailLogs(c *check.C) {

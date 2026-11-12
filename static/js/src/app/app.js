@@ -98,6 +98,10 @@ var api = {
         // summary() - Queries the API for GET /campaigns/summary
         summary: function () {
             return query("/campaigns/summary", "GET", {}, false)
+        },
+        // batchDelete() - Deletes campaigns at DELETE /campaigns/batch-delete
+        batchDelete: function (ids) {
+            return query("/campaigns/batch-delete", "DELETE", { ids: ids }, false)
         }
     },
     // campaignId contains the endpoints for /campaigns/:id

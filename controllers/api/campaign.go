@@ -12,6 +12,11 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
+// campaignDeleteRequest contains the IDs of campaigns to delete.
+type campaignDeleteRequest struct {
+	IDs []int64 `json:"ids"`
+}
+
 // Campaigns returns a list of campaigns if requested via GET.
 // If requested via POST, APICampaigns creates a new campaign and returns a reference to it.
 func (as *Server) Campaigns(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +48,31 @@ func (as *Server) Campaigns(w http.ResponseWriter, r *http.Request) {
 		}
 		JSONResponse(w, c, http.StatusCreated)
 	}
+}
+
+// CampaignsBatchDelete deletes multiple campaigns owned by the current user.
+func (as *Server) CampaignsBatchDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		JSONResponse(w, models.Response{Success: false, Message: http.StatusText(http.StatusMethodNotAllowed)}, http.StatusMethodNotAllowed)
+		return
+	}
+	request := campaignDeleteRequest{}
+	err := json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		JSONResponse(w, models.Response{Success: false, Message: "Invalid JSON structure"}, http.StatusBadRequest)
+		return
+	}
+	if len(request.IDs) == 0 {
+		JSONResponse(w, models.Response{Success: false, Message: "No campaign IDs provided"}, http.StatusBadRequest)
+		return
+	}
+	err = models.DeleteCampaigns(ctx.Get(r, "user_id").(int64), request.IDs)
+	if err != nil {
+		log.Error(err)
+		JSONResponse(w, models.Response{Success: false, Message: "Error deleting campaigns"}, http.StatusInternalServerError)
+		return
+	}
+	JSONResponse(w, models.Response{Success: true, Message: "Campaigns deleted successfully!"}, http.StatusOK)
 }
 
 // CampaignsSummary returns the summary for the current user's campaigns

@@ -668,6 +668,28 @@ func DeleteCampaign(id int64) error {
 	return err
 }
 
+// DeleteCampaigns deletes every campaign owned by the provided user whose ID
+// is included in ids. Each campaign is deleted independently, so a failure on
+// one campaign does not prevent the others from being deleted.
+func DeleteCampaigns(uid int64, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	cs := []Campaign{}
+	err := db.Where("user_id = ?", uid).Where("id IN (?)", ids).Find(&cs).Error
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+	for _, c := range cs {
+		err = DeleteCampaign(c.Id)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CompleteCampaign effectively "ends" a campaign.
 // Any future emails clicked will return a simple "404" page.
 func CompleteCampaign(id int64, uid int64) error {
